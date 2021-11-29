@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Diagnostics.CodeAnalysis;
 using Iot.Device.Card;
 using Iot.Device.Card.Mifare;
@@ -406,43 +407,43 @@ namespace Iot.Device.Pn5180
         }
 
         /// <inheritdoc/>
-        public override int Transceive(byte targetNumber, ReadOnlySpan<byte> dataToSend, Span<byte> dataFromCard)
+        public override Task<int> Transceive(byte targetNumber, ReadOnlyMemory<byte> dataToSend, Memory<byte> dataFromCard)
         {
             // Check if we have a Mifare Card authentication request
             // Only valid for Type A card so with a target number equal to 0
-            if (((targetNumber == 0) && ((dataToSend[0] == (byte)MifareCardCommand.AuthenticationA) || (dataToSend[0] == (byte)MifareCardCommand.AuthenticationB))) && (dataFromCard.Length == 0))
+            if (((targetNumber == 0) && ((dataToSend.Span[0] == (byte)MifareCardCommand.AuthenticationA) || (dataToSend.Span[0] == (byte)MifareCardCommand.AuthenticationB))) && (dataFromCard.Length == 0))
             {
-                var ret = MifareAuthenticate(dataToSend.Slice(2, 6).ToArray(), (MifareCardCommand)dataToSend[0], dataToSend[1], dataToSend.Slice(8).ToArray());
-                return ret ? 0 : -1;
+                var ret = MifareAuthenticate(dataToSend.Slice(2, 6).ToArray(), (MifareCardCommand)dataToSend.Span[0], dataToSend.Span[1], dataToSend.Slice(8).ToArray());
+                return Task.FromResult(ret ? 0 : -1);
             }
             else
             {
-                return TransceiveClassic(targetNumber, dataToSend, dataFromCard);
+                return Task.FromResult(TransceiveClassic(targetNumber, dataToSend.Span, dataFromCard.Span));
             }
         }
 
         /// <inheritdoc/>
-        public override bool ReselectTarget(byte targetNumber)
+        public override Task<bool> ReselectTarget(byte targetNumber)
         {
             if (targetNumber == 0)
             {
                 // TODO: this should be implemented this for Type A card for this reader
                 // This will need to send WUPA (0x52 coded on 7 bits), Anti-collision and select loops like for initial detection
                 // We don't throw an exception, this is just telling that the selection failed
-                return false;
+                return Task.FromResult(false);
             }
             else
             {
                 var card = _activeSelected.Where(m => m.Card.TargetNumber == targetNumber).FirstOrDefault();
                 if (card is null)
                 {
-                    return false;
+                    return Task.FromResult(false);
                 }
 
                 DeselectCardTypeB(card.Card);
                 // Deselect may fail but if selection succeed it's ok
                 var ret = SelectCardTypeB(card.Card);
-                return ret;
+                return Task.FromResult(ret);
             }
         }
 

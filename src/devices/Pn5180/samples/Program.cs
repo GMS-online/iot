@@ -8,6 +8,7 @@ using System.Device.Spi;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Iot.Device.Card.CreditCardProcessing;
 using Iot.Device.Card.Mifare;
 using Iot.Device.Card.Ultralight;
@@ -57,11 +58,11 @@ Console.WriteLine();
 
 if (choice == '1')
 {
-    TypeB();
+    await TypeB();
 }
 else if (choice == '2')
 {
-    TypeA();
+    await TypeA();
 }
 else if (choice == '3')
 {
@@ -81,7 +82,7 @@ else if (choice == '6')
 }
 else if (choice == '7')
 {
-    ProcessUltralight();
+    await ProcessUltralight();
 }
 else
 {
@@ -170,7 +171,7 @@ void RfConfiguration()
     }
 }
 
-void TypeB()
+async Task TypeB()
 {
     Console.WriteLine();
     // Poll the data for 20 seconds
@@ -189,7 +190,7 @@ void TypeB()
         Console.WriteLine($"Nad support: {card.NadSupported}");
 
         var creditCard = new CreditCard(pn5180, card.TargetNumber, 2);
-        ReadAndDisplayData(creditCard);
+        await ReadAndDisplayData(creditCard);
 
         // Halt card
         if (pn5180.DeselectCardTypeB(card))
@@ -207,7 +208,7 @@ void TypeB()
     }
 }
 
-void TypeA()
+async Task TypeA()
 {
     Console.WriteLine();
     // Let's pull for 20 seconds and see the result
@@ -231,20 +232,20 @@ void TypeA()
         {
             mifareCard.BlockNumber = block;
             mifareCard.Command = MifareCardCommand.AuthenticationB;
-            var ret = mifareCard.RunMifareCardCommand();
-            mifareCard.ReselectCard();
+            var ret = await mifareCard.RunMifareCardCommand();
+            await mifareCard.ReselectCard();
             if (ret < 0)
             {
                 // Try another one
                 mifareCard.Command = MifareCardCommand.AuthenticationA;
-                ret = mifareCard.RunMifareCardCommand();
+                ret = await mifareCard.RunMifareCardCommand();
             }
 
             if (ret >= 0)
             {
                 mifareCard.BlockNumber = block;
                 mifareCard.Command = MifareCardCommand.Read16Bytes;
-                ret = mifareCard.RunMifareCardCommand();
+                ret = await mifareCard.RunMifareCardCommand();
                 if (ret >= 0 && mifareCard.Data is object)
                 {
                     Console.WriteLine($"Bloc: {block}, Data: {BitConverter.ToString(mifareCard.Data)}");
@@ -348,9 +349,9 @@ void PullTypeBCards()
     while (!Console.KeyAvailable);
 }
 
-void ReadAndDisplayData(CreditCard creditCard)
+async Task ReadAndDisplayData(CreditCard creditCard)
 {
-    creditCard.ReadCreditCardInformation();
+    await creditCard.ReadCreditCardInformation();
     DisplayTags(creditCard.Tags, 0);
     // Display Log Entries
     var format = Tag.SearchTag(creditCard.Tags, 0x9F4F).FirstOrDefault();
@@ -424,7 +425,7 @@ void DisplayLogEntries(List<byte[]> entries, List<Tag> format)
     }
 }
 
-void ProcessUltralight()
+async Task ProcessUltralight()
 {
     Data106kbpsTypeA? card;
     do
@@ -447,7 +448,7 @@ void ProcessUltralight()
     ultralight.SerialNumber = card.NfcId;
     Console.WriteLine($"Type: {ultralight.UltralightCardType}, Ndef capacity: {ultralight.NdefCapacity}");
 
-    var version = ultralight.GetVersion();
+    var version = await ultralight.GetVersion();
     if ((version != null) && (version.Length > 0))
     {
         Console.WriteLine("Get Version details: ");
@@ -463,7 +464,7 @@ void ProcessUltralight()
         Console.WriteLine("Can't read the version.");
     }
 
-    var sign = ultralight.GetSignature();
+    var sign = await ultralight.GetSignature();
     if ((sign != null) && (sign.Length > 0))
     {
         Console.WriteLine("Signature: ");
@@ -482,7 +483,7 @@ void ProcessUltralight()
     // The ReadFast feature can be used as well, note that the MFRC522 has a very limited FIFO
     // So maximum 9 pages can be read as once.
     Console.WriteLine("Fast read example:");
-    var buff = ultralight.ReadFast(0, 8);
+    var buff = await ultralight.ReadFast(0, 8);
     if (buff != null)
     {
         for (int i = 0; i < buff.Length / 4; i++)
@@ -496,7 +497,7 @@ void ProcessUltralight()
     {
         ultralight.BlockNumber = (byte)block; // Safe cast, can't be more than 255
         ultralight.Command = UltralightCommand.Read16Bytes;
-        var ret = ultralight.RunUltralightCommand();
+        var ret = await ultralight.RunUltralightCommand();
         if (ret > 0)
         {
             Console.Write($"  Block: {ultralight.BlockNumber:X2} - ");
@@ -519,8 +520,9 @@ void ProcessUltralight()
 
     Console.WriteLine("Configuration of the card");
     // Get the Configuration
-    var res = ultralight.TryGetConfiguration(out Configuration configuration);
-    if (res)
+    var resConfiguration = await ultralight.TryGetConfiguration();
+    Configuration configuration = resConfiguration.Configuration;
+    if (resConfiguration.Result)
     {
         Console.WriteLine("  Mirror:");
         Console.WriteLine($"    {configuration.Mirror.MirrorType}, page: {configuration.Mirror.Page}, position: {configuration.Mirror.Position}");
@@ -536,9 +538,9 @@ void ProcessUltralight()
         Console.WriteLine("Error getting the configuration");
     }
 
-    NdefMessage message;
-    res = ultralight.TryReadNdefMessage(out message);
-    if (res && message.Length != 0)
+    var resMessage = await ultralight.TryReadNdefMessage();
+    NdefMessage message = resMessage.Message;
+    if (resMessage.Result && message.Length != 0)
     {
         foreach (var record in message.Records)
         {
@@ -555,18 +557,18 @@ void ProcessUltralight()
         Console.WriteLine("No NDEF message in this ");
     }
 
-    res = ultralight.IsFormattedNdef();
+    var res = await ultralight.IsFormattedNdef();
     if (!res)
     {
         Console.WriteLine("Card is not NDEF formated, we will try to format it");
-        res = ultralight.FormatNdef();
+        res = await ultralight.FormatNdef(false);
         if (!res)
         {
             Console.WriteLine("Impossible to format in NDEF, we will still try to write NDEF content.");
         }
         else
         {
-            res = ultralight.IsFormattedNdef();
+            res = await ultralight.IsFormattedNdef();
             if (res)
             {
                 Console.WriteLine("Formating successful");
@@ -580,7 +582,7 @@ void ProcessUltralight()
 
     NdefMessage newMessage = new NdefMessage();
     newMessage.Records.Add(new TextRecord("I ❤ .NET IoT", "en", Encoding.UTF8));
-    res = ultralight.WriteNdefMessage(newMessage);
+    res = await ultralight.WriteNdefMessage(newMessage);
     if (res)
     {
         Console.WriteLine("NDEF data successfully written on the card.");

@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Ports;
 using System.Threading;
+using System.Threading.Tasks;
 using Iot.Device.Card;
 using Iot.Device.Rfid;
 using Iot.Device.Card.Mifare;
@@ -858,44 +859,44 @@ namespace Iot.Device.Mfrc522
         }
 
         /// <inheritdoc/>
-        public override int Transceive(byte targetNumber, ReadOnlySpan<byte> dataToSend, Span<byte> dataFromCard)
+        public override Task<int> Transceive(byte targetNumber, ReadOnlyMemory<byte> dataToSend, Memory<byte> dataFromCard)
         {
             // targetNumber is not used here as only 1 card can be selected at a time so will be ignored
             // The dataToSend buffer contains anyway the unique of the card
             Status status;
 
             // Use built in functions for authentication in case of classic Mifare cards
-            if ((dataToSend[0] == (byte)MifareCardCommand.AuthenticationA) || (dataToSend[0] == (byte)MifareCardCommand.AuthenticationB))
+            if ((dataToSend.Span[0] == (byte)MifareCardCommand.AuthenticationA) || (dataToSend.Span[0] == (byte)MifareCardCommand.AuthenticationB))
             {
-                if ((dataFromCard == null) || (dataFromCard.Length == 0))
+                if (dataFromCard.Length == 0)
                 {
                     status = SendAndReceiveData(MfrcCommand.MifareAuthenticate, dataToSend.ToArray(), null);
                 }
                 else
                 {
-                    return SendWithCrc(dataToSend, dataFromCard);
+                    return Task.FromResult(SendWithCrc(dataToSend.Span, dataFromCard.Span));
 
                 }
 
-                return status == Status.Ok ? 0 : -1;
+                return Task.FromResult(status == Status.Ok ? 0 : -1);
             }
-            else if ((dataToSend[0] == (byte)MifareCardCommand.Incrementation) || (dataToSend[0] == (byte)MifareCardCommand.Decrementation)
-                || (dataToSend[0] == (byte)MifareCardCommand.Restore))
+            else if ((dataToSend.Span[0] == (byte)MifareCardCommand.Incrementation) || (dataToSend.Span[0] == (byte)MifareCardCommand.Decrementation)
+                || (dataToSend.Span[0] == (byte)MifareCardCommand.Restore))
             {
-                return TwoStepsIncDecRestore(dataToSend, dataFromCard);
+                return Task.FromResult(TwoStepsIncDecRestore(dataToSend.Span, dataFromCard.Span));
             }
-            else if (Enum.IsDefined(typeof(UltralightCommand), (UltralightCommand)dataToSend[0]))
+            else if (Enum.IsDefined(typeof(UltralightCommand), (UltralightCommand)dataToSend.Span[0]))
             {
-                if ((dataToSend[0] == (byte)UltralightCommand.ReadFast) && (dataFromCard.Length > 62))
+                if ((dataToSend.Span[0] == (byte)UltralightCommand.ReadFast) && (dataFromCard.Length > 62))
                 {
                     throw new ArgumentException($"Maximum number of pages to be able to read with MFRC522 is 7 as internal FIFO is limited to 64 including CRC.");
                 }
 
-                return SendWithCrc(dataToSend, dataFromCard);
+                return Task.FromResult(SendWithCrc(dataToSend.Span, dataFromCard.Span));
             }
 
-            status = SendAndReceiveData(MfrcCommand.Transceive, dataToSend.ToArray(), dataFromCard);
-            return status == Status.Ok ? dataFromCard.Length : -1;
+            status = SendAndReceiveData(MfrcCommand.Transceive, dataToSend.ToArray(), dataFromCard.Span);
+            return Task.FromResult(status == Status.Ok ? dataFromCard.Length : -1);
         }
 
         private int SendWithCrc(ReadOnlySpan<byte> dataToSend, Span<byte> dataFromCard)
@@ -966,14 +967,14 @@ namespace Iot.Device.Mfrc522
         }
 
         /// <inheritdoc/>
-        public override bool ReselectTarget(byte targetNumber)
+        public override Task<bool> ReselectTarget(byte targetNumber)
         {
             // We halt the card, and we don't care if it happens correctly
             Halt();
             // We reselect the card and ignore the target number as reader supports only 1 card
             // And we assume here that the card hasn't been changed in the mean time
             IsCardPresent(new byte[2]);
-            return Select(out byte[]? uuid, out byte sak) == Status.Ok;
+            return Task.FromResult(Select(out byte[]? uuid, out byte sak) == Status.Ok);
         }
     }
 }

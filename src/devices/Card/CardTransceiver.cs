@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace Iot.Device.Card
 {
@@ -20,7 +21,7 @@ namespace Iot.Device.Card
         /// <param name="dataToSend">A standardized raw buffer with the command at the position 0 in the array</param>
         /// <param name="dataFromCard">If any data are read from the card, they will be put into this array</param>
         /// <returns>-1 in case of error, otherwise the number of bytes read and copied into the <paramref name="dataFromCard"/> array</returns>
-        public abstract int Transceive(byte targetNumber, ReadOnlySpan<byte> dataToSend, Span<byte> dataFromCard);
+        public abstract Task<int> Transceive(byte targetNumber, ReadOnlyMemory<byte> dataToSend, Memory<byte> dataFromCard);
 
         /// <summary>
         /// Once you have an authentication operation failing with Mifare cards or a read/write, the card stop.
@@ -29,6 +30,6 @@ namespace Iot.Device.Card
         /// </summary>
         /// <param name="targetNumber">The target number to reselect</param>
         /// <returns>True if success</returns>
-        public abstract bool ReselectTarget(byte targetNumber);
+        public abstract Task<bool> ReselectTarget(byte targetNumber);
     }
 }

@@ -7,6 +7,7 @@ using System.Device.I2c;
 using System.Device.Spi;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Iot.Device.Card;
 using Iot.Device.Card.Mifare;
 using Iot.Device.Common;
@@ -80,7 +81,7 @@ if (nfc.KeyChar == '1')
         return;
     }
 
-    RunTestNdef(pn5180, cardTypeA);
+    await RunTestNdef(pn5180, cardTypeA);
 }
 else
 {
@@ -178,10 +179,10 @@ else
         return;
     }
 
-    RunTestNdef(pn532, decrypted);
+    await RunTestNdef(pn532, decrypted);
 }
 
-void RunTestNdef(CardTransceiver transceiver, Data106kbpsTypeA card)
+async Task RunTestNdef(CardTransceiver transceiver, Data106kbpsTypeA card)
 {
     Console.WriteLine($"ATQA: {card.Atqa}");
     Console.WriteLine($"SAK: {card.Sak}");
@@ -197,29 +198,29 @@ void RunTestNdef(CardTransceiver transceiver, Data106kbpsTypeA card)
     switch (testToRun.KeyChar)
     {
         case '1':
-            DumpMifare(mifareCard);
+            await DumpMifare(mifareCard);
             break;
         case '2':
-            ReadNdef(mifareCard);
+            await ReadNdef(mifareCard);
             break;
         case '3':
-            ret = mifareCard.FormatNdef();
+            ret = await mifareCard.FormatNdef();
             string msg = ret ? "Formatting successful." : "Error formatting card.";
             Console.WriteLine(msg);
             break;
         case '4':
-            WriteNdef(mifareCard);
+            await WriteNdef(mifareCard);
             break;
         case '5':
-            WriteLongNdef(mifareCard);
+            await WriteLongNdef(mifareCard);
             break;
         case '6':
-            ret = mifareCard.IsFormattedNdef();
+            ret = await mifareCard.IsFormattedNdef();
             var isForm = ret ? string.Empty : " not";
             Console.WriteLine($"This card is{isForm} NDEF formatted");
             break;
         case '7':
-            ret = mifareCard.EraseSector(MifareCard.DefaultKeyA, MifareCard.DefaultKeyB, 1, false, true);
+            ret = await mifareCard.EraseSector(MifareCard.DefaultKeyA.ToArray(), MifareCard.DefaultKeyB.ToArray(), 1, false, true);
             var isErased = ret ? string.Empty : " not";
             Console.WriteLine($"The sector has{isErased} been erased");
             break;
@@ -229,7 +230,7 @@ void RunTestNdef(CardTransceiver transceiver, Data106kbpsTypeA card)
     }
 }
 
-void WriteNdef(MifareCard mifareCard)
+async Task WriteNdef(MifareCard mifareCard)
 {
     NdefMessage message = new();
     TextRecord recordText = new("This is a text", "en", Encoding.UTF8);
@@ -237,7 +238,7 @@ void WriteNdef(MifareCard mifareCard)
     GeoRecord geoRecord = new(2.1234, -1.2345);
     message.Records.Add(geoRecord);
     mifareCard.KeyB = new byte[6] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-    var res = mifareCard.WriteNdefMessage(message);
+    var res = await mifareCard.WriteNdefMessage(message);
     if (res)
     {
         Console.WriteLine($"Writing successful");
@@ -248,7 +249,7 @@ void WriteNdef(MifareCard mifareCard)
     }
 }
 
-void WriteLongNdef(MifareCard mifareCard)
+async Task WriteLongNdef(MifareCard mifareCard)
 {
     NdefMessage message = new();
     TextRecord recordText = new("This is a text", "en", Encoding.UTF8);
@@ -259,7 +260,7 @@ void WriteLongNdef(MifareCard mifareCard)
     message.Records.Add(uriRecord);
 
     mifareCard.KeyB = new byte[6] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-    var res = mifareCard.WriteNdefMessage(message);
+    var res = await mifareCard.WriteNdefMessage(message);
     if (res)
     {
         Console.WriteLine($"Writing successful");
@@ -270,27 +271,27 @@ void WriteLongNdef(MifareCard mifareCard)
     }
 }
 
-void DumpMifare(MifareCard mifareCard)
+async Task DumpMifare(MifareCard mifareCard)
 {
     for (byte block = 0; block < 64; block++)
     {
         mifareCard.BlockNumber = block;
         mifareCard.Command = MifareCardCommand.AuthenticationA;
-        var ret = mifareCard.RunMifareCardCommand();
+        var ret = await mifareCard.RunMifareCardCommand();
         if (ret < 0)
         {
             // This will reselect the card in case of issue
-            mifareCard.ReselectCard();
+            await mifareCard.ReselectCard();
             // Try another one
             mifareCard.Command = MifareCardCommand.AuthenticationB;
-            ret = mifareCard.RunMifareCardCommand();
+            ret = await mifareCard.RunMifareCardCommand();
         }
 
         if (ret >= 0)
         {
             mifareCard.BlockNumber = block;
             mifareCard.Command = MifareCardCommand.Read16Bytes;
-            ret = mifareCard.RunMifareCardCommand();
+            ret = await mifareCard.RunMifareCardCommand();
             if ((ret >= 0) && (mifareCard.Data is object))
             {
                 Console.WriteLine($"Bloc: {block}, Data: {BitConverter.ToString(mifareCard.Data)}");
@@ -320,10 +321,11 @@ void DumpMifare(MifareCard mifareCard)
     }
 }
 
-void ReadNdef(MifareCard mifareCard)
+async Task ReadNdef(MifareCard mifareCard)
 {
     Console.WriteLine("Reading Mifare card content");
-    mifareCard.TryReadNdefMessage(out NdefMessage message);
+    var res = await mifareCard.TryReadNdefMessage();
+    var message = res.Message;
 
     if (message.Records.Count == 0)
     {

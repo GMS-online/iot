@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Threading.Tasks;
 using Iot.Device.Common;
 using Iot.Device.Ndef;
 using Microsoft.Extensions.Logging;
@@ -81,16 +82,21 @@ namespace Iot.Device.Card.Ultralight
         /// <summary>
         /// Constructor for Ultralight
         /// </summary>
-        /// <param name="rfid">A card transceiver class</param>
-        /// <param name="target">The target number as some card readers attribute one</param>
         public UltralightCard(CardTransceiver rfid, byte target)
         {
             _logger = this.GetCurrentClassLogger();
             _rfid = rfid;
             Target = target;
+        }
+
+        /// <summary>
+        /// Constructor for Ultralight
+        /// </summary>
+        public async Task Init()
+        {
             // Try to get the version, if not sucessful than it's one of the early model or C
             // See https://stackmirror.com/questions/37002498
-            GetVersion();
+            await GetVersion();
             if ((Data != null) && (Data.Length == 8))
             {
                 if ((Data[2] == 0x04) && (Data[3] == 0x01) && (Data[4] == 0x01) && (Data[5] == 0x00) && (Data[6] == 0x0B))
@@ -192,7 +198,7 @@ namespace Iot.Device.Card.Ultralight
             {
                 // Check if AuthenticationPart1 returns something
                 Command = UltralightCommand.ThreeDsAuthenticationPart1;
-                var res = RunUltralightCommand();
+                var res = await RunUltralightCommand();
                 if (res > 0)
                 {
                     NdefCapacity = 144;
@@ -202,7 +208,7 @@ namespace Iot.Device.Card.Ultralight
                 {
                     // Then it's either a Ultralight or 203. Read block 41
                     Command = UltralightCommand.Read16Bytes;
-                    res = RunUltralightCommand();
+                    res = await RunUltralightCommand();
                     if (res > 0)
                     {
                         NdefCapacity = 137;
@@ -221,10 +227,10 @@ namespace Iot.Device.Card.Ultralight
         /// Get the version data
         /// </summary>
         /// <returns>Empty byte array if error, otherwise a 8 bytes array</returns>
-        public byte[] GetVersion()
+        public async Task<byte[]> GetVersion()
         {
             Command = UltralightCommand.GetVersion;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if ((res == 8) && (Data is object))
             {
                 return Data;
@@ -239,12 +245,12 @@ namespace Iot.Device.Card.Ultralight
         /// <param name="startPage">The start block</param>
         /// <param name="endPage">The end block</param>
         /// <returns>A buffer with the read bytes</returns>
-        public byte[] ReadFast(byte startPage, byte endPage)
+        public async Task<byte[]> ReadFast(byte startPage, byte endPage)
         {
             BlockNumber = startPage < endPage ? startPage : endPage;
             _endAddress = startPage > endPage ? startPage : endPage;
             Command = UltralightCommand.ReadFast;
-            var ret = RunUltralightCommand();
+            var ret = await RunUltralightCommand();
             return ret > 0 ? Data! : new byte[0];
         }
 
@@ -252,7 +258,7 @@ namespace Iot.Device.Card.Ultralight
         /// Run the last setup command. In case of reading bytes, they are automatically pushed into the Data property
         /// </summary>
         /// <returns>-1 if the process fails otherwise the number of bytes read</returns>
-        public int RunUltralightCommand()
+        public async Task<int> RunUltralightCommand()
         {
             byte[] dataOut = new byte[0];
             bool awaitingData = false;
@@ -297,7 +303,7 @@ namespace Iot.Device.Card.Ultralight
                 dataOut = new byte[3];
             }
 
-            var ret = _rfid.Transceive(Target, Serialize(), dataOut.AsSpan());
+            var ret = await _rfid.Transceive(Target, Serialize(), dataOut);
             _logger.LogDebug($"{nameof(UltralightCommand)}: {Command}, Target: {Target}, Data: {BitConverter.ToString(Serialize())}, Success: {ret}, Dataout: {BitConverter.ToString(dataOut)}");
             if ((ret > 0) && awaitingData)
             {
@@ -312,7 +318,7 @@ namespace Iot.Device.Card.Ultralight
         /// </summary>
         /// <param name="page">The page number</param>
         /// <returns>True is read only</returns>
-        public bool IsPageReadOnly(byte page)
+        public async Task<bool> IsPageReadOnly(byte page)
         {
             // Note: to improve this method, a caching mechanism can be put in place
             // In general, this is used to check if something is password protected and not in
@@ -336,38 +342,38 @@ namespace Iot.Device.Card.Ultralight
             // warning byte2 bit0, 1 and 2 are write once, once status changed, can't be changes again
             if ((page >= 0x3) && page <= 0x7)
             {
-                Span<byte> toSend = stackalloc byte[2] { (byte)UltralightCommand.Read16Bytes, 2 };
-                Span<byte> dataOut = stackalloc byte[16];
-                _rfid.Transceive(Target, toSend, dataOut);
-                return (dataOut[2] & (0b0000_0001 << page)) == (0b0000_0001 << page);
+                Memory<byte> toSend = new byte[2] { (byte)UltralightCommand.Read16Bytes, 2 };
+                Memory<byte> dataOut = new byte[16];
+                await _rfid.Transceive(Target, toSend, dataOut);
+                return (dataOut.Span[2] & (0b0000_0001 << page)) == (0b0000_0001 << page);
             }
             else if ((page >= 0x08) && (page <= 0x0F))
             {
-                Span<byte> toSend = stackalloc byte[2] { (byte)UltralightCommand.Read16Bytes, 2 };
-                Span<byte> dataOut = stackalloc byte[16];
-                _rfid.Transceive(Target, toSend, dataOut);
-                return (dataOut[3] & (0b0000_0001 << (page - 8))) == (0b0000_0001 << (page - 8));
+                Memory<byte> toSend = new byte[2] { (byte)UltralightCommand.Read16Bytes, 2 };
+                Memory<byte> dataOut = new byte[16];
+                await _rfid.Transceive(Target, toSend, dataOut);
+                return (dataOut.Span[3] & (0b0000_0001 << (page - 8))) == (0b0000_0001 << (page - 8));
             }
             else
             {
-                Span<byte> toSend = stackalloc byte[2] { (byte)UltralightCommand.Read16Bytes, 0x28 };
-                Span<byte> dataOut = stackalloc byte[16];
+                Memory<byte> toSend = new byte[2] { (byte)UltralightCommand.Read16Bytes, 0x28 };
+                Memory<byte> dataOut = new byte[16];
                 switch (UltralightCardType)
                 {
                     case UltralightCardType.UltralightNtag203:
                         // Read 0x24
-                        toSend[1] = 0x24;
-                        _rfid.Transceive(Target, toSend, dataOut);
+                        toSend.Span[1] = 0x24;
+                        await _rfid.Transceive(Target, toSend, dataOut);
                         // byte 0, 1 and 2 are used , 2 pages lock with specific cases
                         if ((page >= 16) && (page <= 31))
                         {
                             var inc = (page - 16) / 2;
-                            return (dataOut[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
                         else if ((page >= 32) && (page <= 35))
                         {
                             var inc = (page - 32) / 2;
-                            return (dataOut[1] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[1] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
 
                         return true;
@@ -376,29 +382,29 @@ namespace Iot.Device.Card.Ultralight
                     case UltralightCardType.UltralightNtag213F:
                     case UltralightCardType.UltralightNtag212:
                         // Read 0x28
-                        _rfid.Transceive(Target, toSend, dataOut);
+                        await _rfid.Transceive(Target, toSend, dataOut);
                         // byte 0, 1 and 2 are used , 2 pages lock with specific cases
                         if ((page >= 16) && (page <= 31))
                         {
                             var inc = (page - 16) / 2;
-                            return (dataOut[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
                         else if ((page >= 32) && (page <= 39))
                         {
                             var inc = (page - 32) / 2;
-                            return (dataOut[1] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[1] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
 
                         return true;
                     case UltralightCardType.UltralightNtag215:
                         // Read 0x82
-                        toSend[1] = 0x82;
-                        _rfid.Transceive(Target, toSend, dataOut);
+                        toSend.Span[1] = 0x82;
+                        await _rfid.Transceive(Target, toSend, dataOut);
                         // byte 0 and 16 pages blocks
                         if ((page >= 16) && (page <= 129))
                         {
                             var inc = (page - 16) / 16;
-                            return (dataOut[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
 
                         return true;
@@ -407,18 +413,18 @@ namespace Iot.Device.Card.Ultralight
                     case UltralightCardType.UltralightNtagI2cNT3H1101:
                     case UltralightCardType.UltralightNtagI2cNT3H1101W0:
                         // Read 0xE2
-                        toSend[1] = 0xE2;
-                        _rfid.Transceive(Target, toSend, dataOut);
+                        toSend.Span[1] = 0xE2;
+                        await _rfid.Transceive(Target, toSend, dataOut);
                         // byte 0 and 1 for 16 pages blocks
                         if ((page >= 16) && (page <= 143))
                         {
                             var inc = (page - 16) / 16;
-                            return (dataOut[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[0] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
                         else if ((page >= 144) && (page <= 225))
                         {
                             var inc = (page - 144) / 16;
-                            return (dataOut[1] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
+                            return (dataOut.Span[1] & (0b0000_0001 << inc)) == (0b0000_0001 << inc);
                         }
 
                         return true;
@@ -463,9 +469,9 @@ namespace Iot.Device.Card.Ultralight
         /// Select the card. Needed if authentication or read/write failed
         /// </summary>
         /// <returns>True if success</returns>
-        public bool ReselectCard()
+        public async Task<bool> ReselectCard()
         {
-            return _rfid.ReselectTarget(Target);
+            return await _rfid.ReselectTarget(Target);
         }
 
         /// <summary>
@@ -473,7 +479,7 @@ namespace Iot.Device.Card.Ultralight
         /// </summary>
         /// <param name="message">The NDEF Message to write</param>
         /// <returns>True if success</returns>
-        public bool WriteNdefMessage(NdefMessage message)
+        public async Task<bool> WriteNdefMessage(NdefMessage message)
         {
             const int BlockSize = 4;
 
@@ -484,21 +490,21 @@ namespace Iot.Device.Card.Ultralight
                 return false;
             }
 
-            Span<byte> serializedMessage = stackalloc byte[message.Length + 2 + messageLengthBytes];
-            message.Serialize(serializedMessage.Slice(1 + messageLengthBytes));
-            serializedMessage[0] = 0x03;
+            Memory<byte> serializedMessage = new byte[message.Length + 2 + messageLengthBytes];
+            message.Serialize(serializedMessage.Slice(1 + messageLengthBytes).Span);
+            serializedMessage.Span[0] = 0x03;
             if (messageLengthBytes == 1)
             {
-                serializedMessage[1] = (byte)message.Length;
+                serializedMessage.Span[1] = (byte)message.Length;
             }
             else
             {
-                serializedMessage[1] = 0xFF;
-                serializedMessage[2] = (byte)((message.Length >> 8) & 0xFF);
-                serializedMessage[3] = (byte)(message.Length & 0xFF);
+                serializedMessage.Span[1] = 0xFF;
+                serializedMessage.Span[2] = (byte)((message.Length >> 8) & 0xFF);
+                serializedMessage.Span[3] = (byte)(message.Length & 0xFF);
             }
 
-            serializedMessage[serializedMessage.Length - 1] = 0xFE;
+            serializedMessage.Span[serializedMessage.Length - 1] = 0xFE;
             // Blocks are 4 bytes
             int nbBlocks = serializedMessage.Length / BlockSize + (serializedMessage.Length % BlockSize > 0 ? 1 : 0);
 
@@ -517,7 +523,7 @@ namespace Iot.Device.Card.Ultralight
                     serializedMessage.Slice(block * BlockSize).CopyTo(Data);
                 }
 
-                var res = RunUltralightCommand();
+                var res = await RunUltralightCommand();
                 if (res < 0)
                 {
                     return false;
@@ -532,11 +538,11 @@ namespace Iot.Device.Card.Ultralight
         /// </summary>
         /// <returns>True if NDEF formated</returns>
         /// <remarks>It will only check the first 2 block of the first sector and that the GPB is set properly</remarks>
-        public bool IsFormattedNdef()
+        public async Task<bool> IsFormattedNdef()
         {
             BlockNumber = 3;
             Command = UltralightCommand.Read16Bytes;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res < 0)
             {
                 return false;
@@ -562,18 +568,19 @@ namespace Iot.Device.Card.Ultralight
         /// <summary>
         /// Format the Card to NDEF
         /// </summary>
+        /// <param name="authenticationIsRequired">true if authentication is required.</param>
         /// <param name="authenticationKey">An authentication key if authentication is required.</param>
         /// <returns>True if success</returns>
-        public bool FormatNdef(ReadOnlySpan<byte> authenticationKey = default)
+        public async Task<bool> FormatNdef(bool authenticationIsRequired, ReadOnlyMemory<byte> authenticationKey = default)
         {
             // NDEF formatting is starting on page 3:
             // E1 10 CP 00
             // 03 00 FE 00
             // Early NTAG should be formated a bit differently but this is enough
             // CP = NdefCapacity / 8
-            if (authenticationKey != default)
+            if (authenticationIsRequired)
             {
-                var authOK = ProcessAuthentication(authenticationKey);
+                var authOK = await ProcessAuthentication(authenticationKey);
                 if (!authOK)
                 {
                     return false;
@@ -586,14 +593,14 @@ namespace Iot.Device.Card.Ultralight
             // If it is.
             BlockNumber = 3;
             Command = UltralightCommand.Read16Bytes;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res > 0)
             {
                 if ((Data![0] != 0xE1) || (Data[1] != 0x10))
                 {
                     Command = UltralightCommand.Write4Bytes;
                     Data = new byte[4] { 0xE1, 0x10, (byte)(NdefCapacity / 8), 0x00 };
-                    res = RunUltralightCommand();
+                    res = await RunUltralightCommand();
                     if (res <= 0)
                     {
                         return false;
@@ -610,7 +617,7 @@ namespace Iot.Device.Card.Ultralight
             Data[1] = 0x00; // Length of message
             Data[2] = 0xFE; // NDEF end marker
             Data[3] = 0x00; // Empty
-            res = RunUltralightCommand();
+            res = await RunUltralightCommand();
             if (res <= 0)
             {
                 return false;
@@ -622,19 +629,18 @@ namespace Iot.Device.Card.Ultralight
         /// <summary>
         /// Try to read a NDEF Message from a Mifare card
         /// </summary>
-        /// <param name="message">The NDEF message</param>
         /// <returns>True if success</returns>
-        public bool TryReadNdefMessage(out NdefMessage message)
+        public async Task<(bool Result, NdefMessage Message)> TryReadNdefMessage()
         {
             const int BlockSize = 16;
-            message = new NdefMessage();
+            var message = new NdefMessage();
             // Read page 4
             BlockNumber = 4;
             Command = UltralightCommand.Read16Bytes;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res <= 0)
             {
-                return false;
+                return (false, message);
             }
 
             // Check if it's the old formating and skip it
@@ -649,7 +655,7 @@ namespace Iot.Device.Card.Ultralight
 
             if ((start < 0) || (size < 0))
             {
-                return false;
+                return (false, message);
             }
 
             // calculate the size to read
@@ -658,11 +664,11 @@ namespace Iot.Device.Card.Ultralight
             // We would have to read more available data than the capacity
             if ((NdefCapacity + 12) <= blocksToRead * BlockSize)
             {
-                return false;
+                return (false, message);
             }
 
-            Span<byte> card = new byte[(blocksToRead + slice / 4) * BlockSize];
-            Data.AsSpan(slice).CopyTo(card);
+            Memory<byte> card = new byte[(blocksToRead + slice / 4) * BlockSize];
+            Data.AsSpan(slice).CopyTo(card.Span);
 
             byte idxCard = 1;
             // Decrease by 1 block if we skip first page
@@ -671,10 +677,10 @@ namespace Iot.Device.Card.Ultralight
             {
                 BlockNumber = (byte)block; // Safe cast as never more than 255
                 Command = UltralightCommand.Read16Bytes;
-                res = RunUltralightCommand();
+                res = await RunUltralightCommand();
                 if (res <= 0)
                 {
-                    return false;
+                    return (false, message);
                 }
 
                 Data.CopyTo(card.Slice(idxCard * BlockSize - slice));
@@ -683,7 +689,7 @@ namespace Iot.Device.Card.Ultralight
                 block += 4;
             }
 
-            var ndef = NdefMessage.ExtractMessage(card);
+            var ndef = NdefMessage.ExtractMessage(card.Span);
 
             try
             {
@@ -693,10 +699,10 @@ namespace Iot.Device.Card.Ultralight
             {
                 // Catching all exceptions as quite a lot can happen
                 // This is checking if a message is valid or not
-                return false;
+                return (false, message);
             }
 
-            return true;
+            return (true, message);
         }
 
         /// <summary>
@@ -705,7 +711,7 @@ namespace Iot.Device.Card.Ultralight
         /// <param name="authenticationKkey">An authentication key</param>
         /// <returns>True if success</returns>
         /// <remarks>Depending on the type of authentication, the process will be done transparently</remarks>
-        public bool ProcessAuthentication(ReadOnlySpan<byte> authenticationKkey)
+        public async Task<bool> ProcessAuthentication(ReadOnlyMemory<byte> authenticationKkey)
         {
             if (UltralightCardType == UltralightCardType.UltralightC)
             {
@@ -720,7 +726,7 @@ namespace Iot.Device.Card.Ultralight
 
             AuthenticationKey = authenticationKkey.ToArray();
             Command = UltralightCommand.PasswordAuthentication;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res < 0)
             {
                 return false;
@@ -736,11 +742,11 @@ namespace Iot.Device.Card.Ultralight
         /// </summary>
         /// <param name="counter">A valid counter value, can vary depending on the card. 0xFF will ignore the value and use the one set in Counter</param>
         /// <returns>The counter value or -1 if any error</returns>
-        public int GetCounter(byte counter = 0xFF)
+        public async Task<int> GetCounter(byte counter = 0xFF)
         {
             Command = UltralightCommand.ReadCounter;
             Counter = counter != 0xFF ? counter : Counter;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res < 0)
             {
                 return -1;
@@ -755,11 +761,11 @@ namespace Iot.Device.Card.Ultralight
         /// <param name="block">The block number to write</param>
         /// <returns>True if success</returns>
         /// <remarks>You will need to be authenticated properly before</remarks>
-        public bool WriteDataBlock(byte block)
+        public async Task<bool> WriteDataBlock(byte block)
         {
             if (_pack == null)
             {
-                var authOK = ProcessAuthentication(AuthenticationKey);
+                var authOK = await ProcessAuthentication(AuthenticationKey);
                 if (!authOK)
                 {
                     return false;
@@ -768,7 +774,7 @@ namespace Iot.Device.Card.Ultralight
 
             BlockNumber = block;
             Command = UltralightCommand.Write4Bytes;
-            var ret = RunUltralightCommand();
+            var ret = await RunUltralightCommand();
             return ret >= 0;
         }
 
@@ -776,10 +782,10 @@ namespace Iot.Device.Card.Ultralight
         /// Get the chip signature
         /// </summary>
         /// <returns>The signature or an empty array</returns>
-        public byte[] GetSignature()
+        public async Task<byte[]> GetSignature()
         {
             Command = UltralightCommand.ReadSignature;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res > 0)
             {
                 return Data!;
@@ -791,11 +797,10 @@ namespace Iot.Device.Card.Ultralight
         /// <summary>
         /// Try to get the configuration
         /// </summary>
-        /// <param name="configuration">The detailed configuration</param>
         /// <returns></returns>
-        public bool TryGetConfiguration(out Configuration configuration)
+        public async Task<(bool Result, Configuration Configuration)> TryGetConfiguration()
         {
-            configuration = new();
+            var configuration = new Configuration();
 
             // Read the last 4 blocks
             BlockNumber = (byte)(NumberBlocks - 4); // Safe cast as never more than 255
@@ -807,14 +812,14 @@ namespace Iot.Device.Card.Ultralight
             else if (UltralightCardType is UltralightCardType.UltralightC)
             {
                 // There is no configuration for this card
-                return false;
+                return (false, configuration);
             }
 
             Command = UltralightCommand.Read16Bytes;
-            var res = RunUltralightCommand();
+            var res = await RunUltralightCommand();
             if (res < 0)
             {
-                return false;
+                return (false, configuration);
             }
 
             configuration.Mirror.MirrorType = (MirrorType)(Data![0] >> 6);
@@ -829,7 +834,7 @@ namespace Iot.Device.Card.Ultralight
             configuration.NfcCounter.IsEnabled = ((Data[4] >> 4) & 1) == 1;
             configuration.NfcCounter.IsPasswordProtected = ((Data[4] >> 3) & 1) == 1;
             configuration.Authentication.MaximumNumberOfPossibleTries = (byte)(Data[4] & 0b0000_0111);
-            return true;
+            return (true, configuration);
         }
 
         /// <summary>
@@ -838,7 +843,7 @@ namespace Iot.Device.Card.Ultralight
         /// <param name="configuration">The configuration to write</param>
         /// <returns>True if success</returns>
         /// <remarks>An authentication has to happen and will use the credentials stored</remarks>
-        public bool WriteConfiguration(Configuration configuration)
+        public async Task<bool> WriteConfiguration(Configuration configuration)
         {
             if (UltralightCardType is UltralightCardType.UltralightC)
             {
@@ -846,7 +851,7 @@ namespace Iot.Device.Card.Ultralight
                 return false;
             }
 
-            var res = ProcessAuthentication(AuthenticationKey);
+            var res = await ProcessAuthentication(AuthenticationKey);
             if (!res)
             {
                 return false;
@@ -864,7 +869,7 @@ namespace Iot.Device.Card.Ultralight
             Data = new byte[4];
             serialized.AsSpan(0, 4).CopyTo(Data);
             Command = UltralightCommand.Write4Bytes;
-            var ret = RunUltralightCommand();
+            var ret = await RunUltralightCommand();
             if (ret < 0)
             {
                 return false;
@@ -873,7 +878,7 @@ namespace Iot.Device.Card.Ultralight
             BlockNumber++;
             serialized.AsSpan(4, 4).CopyTo(Data);
             Command = UltralightCommand.Write4Bytes;
-            ret = RunUltralightCommand();
+            ret = await RunUltralightCommand();
             if (ret < 0)
             {
                 return false;
@@ -887,11 +892,11 @@ namespace Iot.Device.Card.Ultralight
         /// </summary>
         /// <param name="newAuthenticationKkey">The new authentication key</param>
         /// <returns>True if success</returns>
-        public bool SetPassword(ReadOnlySpan<byte> newAuthenticationKkey)
+        public async Task<bool> SetPassword(ReadOnlyMemory<byte> newAuthenticationKkey)
         {
             if (_pack == null)
             {
-                var res = ProcessAuthentication(AuthenticationKey);
+                var res = await ProcessAuthentication(AuthenticationKey);
                 if (!res)
                 {
                     return false;
@@ -917,13 +922,13 @@ namespace Iot.Device.Card.Ultralight
 
             Data = newAuthenticationKkey.ToArray();
             Command = UltralightCommand.Write4Bytes;
-            var ret = RunUltralightCommand();
+            var ret = await RunUltralightCommand();
             if (ret < 0)
             {
                 return false;
             }
 
-            return ProcessAuthentication(newAuthenticationKkey);
+            return await ProcessAuthentication(newAuthenticationKkey);
         }
 
         private byte[] Serialize()

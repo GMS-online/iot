@@ -30,7 +30,7 @@ namespace Iot.Device.Card.CreditCardProcessing
             Data = tag.Data;
             Parent = tag.Parent;
             Tags = tag.Tags;
-            var ret = TagList.Tags.Where(m => m.TagNumber == TagNumber).FirstOrDefault();
+            var ret = TagList.Tags.FirstOrDefault(m => m.TagNumber == TagNumber);
             if (ret is object)
             {
                 TagTemplateParent = ret.TagTemplateParent;

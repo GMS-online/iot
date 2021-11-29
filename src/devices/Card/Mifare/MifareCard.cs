@@ -3,6 +3,7 @@
 
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Iot.Device.Common;
 using Iot.Device.Ndef;
 using Microsoft.Extensions.Logging;
@@ -109,7 +110,7 @@ namespace Iot.Device.Card.Mifare
         /// Run the last setup command. In case of reading bytes, they are automatically pushed into the Data property
         /// </summary>
         /// <returns>-1 if the process fails otherwise the number of bytes read</returns>
-        public int RunMifareCardCommand()
+        public async Task<int> RunMifareCardCommand()
         {
             byte[] dataOut = new byte[0];
             if (Command == MifareCardCommand.Read16Bytes)
@@ -117,7 +118,7 @@ namespace Iot.Device.Card.Mifare
                 dataOut = new byte[16];
             }
 
-            var ret = _rfid.Transceive(Target, Serialize(), dataOut.AsSpan());
+            var ret = await _rfid.Transceive(Target, Serialize(), dataOut.AsMemory());
             _logger.LogDebug($"{nameof(RunMifareCardCommand)}: {Command}, Target: {Target}, Data: {BitConverter.ToString(Serialize())}, Success: {ret}, Dataout: {BitConverter.ToString(dataOut)}");
             if ((ret > 0) && (Command == MifareCardCommand.Read16Bytes))
             {
@@ -694,7 +695,7 @@ namespace Iot.Device.Card.Mifare
         /// <param name="resetAccessBytes">True to reset all the access bytes</param>
         /// <returns>True if success</returns>
         /// <remarks>Sector 0 can't be fully erase, only the blocks 1 and 2 will be erased</remarks>
-        public bool EraseSector(ReadOnlySpan<byte> newKeyA, ReadOnlySpan<byte> newKeyB, byte sector, bool authenticateWithKeyA, bool resetAccessBytes)
+        public async Task<bool> EraseSector(ReadOnlyMemory<byte> newKeyA, ReadOnlyMemory<byte> newKeyB, byte sector, bool authenticateWithKeyA, bool resetAccessBytes)
         {
             int nbSectors = GetNumberSectors();
             if (sector >= nbSectors)
@@ -717,7 +718,7 @@ namespace Iot.Device.Card.Mifare
             byte sectorTailer = (byte)(sector >= 32 ? 32 * 4 + (sector - 32) * 16 + 15 : sector * 4 + 3);
             BlockNumber = sectorTailer;
             Command = authenticateWithKeyA ? MifareCardCommand.AuthenticationA : MifareCardCommand.AuthenticationB;
-            var ret = RunMifareCardCommand();
+            var ret = await RunMifareCardCommand();
             if (ret < 0)
             {
                 return false;
@@ -732,17 +733,17 @@ namespace Iot.Device.Card.Mifare
             if (newKeyA.Length is 6)
             {
                 KeyA = newKeyA.ToArray();
-                newKeyA.CopyTo(Data.AsSpan().Slice(0, 6));
+                newKeyA.CopyTo(Data.AsMemory().Slice(0, 6));
             }
 
             if (newKeyB.Length is 6)
             {
                 KeyB = newKeyB.ToArray();
-                newKeyB.CopyTo(Data.AsSpan().Slice(10, 6));
+                newKeyB.CopyTo(Data.AsMemory().Slice(10, 6));
             }
 
             // Find the sector tailer based on the sector number and it's a safe byte cast
-            var success = WriteDataBlock(sectorTailer);
+            var success = await WriteDataBlock(sectorTailer);
             if (!success)
             {
                 return false;
@@ -754,14 +755,14 @@ namespace Iot.Device.Card.Mifare
             {
                 BlockNumber = block;
                 Command = authenticateWithKeyA ? MifareCardCommand.AuthenticationA : MifareCardCommand.AuthenticationB;
-                ret = RunMifareCardCommand();
+                ret = await RunMifareCardCommand();
                 if (ret < 0)
                 {
                     return false;
                 }
 
                 Data = new byte[16];
-                success = WriteDataBlock(block);
+                success = await WriteDataBlock(block);
                 if (!success)
                 {
                     return false;
@@ -775,9 +776,9 @@ namespace Iot.Device.Card.Mifare
         /// Select the card. Needed if authentication or read/write failed
         /// </summary>
         /// <returns>True if success</returns>
-        public bool ReselectCard()
+        public async Task<bool> ReselectCard()
         {
-            return _rfid.ReselectTarget(Target);
+            return await _rfid.ReselectTarget(Target);
         }
 
         /// <summary>
@@ -785,7 +786,7 @@ namespace Iot.Device.Card.Mifare
         /// </summary>
         /// <param name="keyB">The key B to be used for formatting, if empty, will use the default key B</param>
         /// <returns>True if success</returns>
-        public bool FormatNdef(ReadOnlySpan<byte> keyB = default)
+        public async Task<bool> FormatNdef(ReadOnlyMemory<byte> keyB = default)
         {
             if (Capacity is not MifareCardCapacity.Mifare1K or MifareCardCapacity.Mifare2K or MifareCardCapacity.Mifare4K)
             {
@@ -802,58 +803,58 @@ namespace Iot.Device.Card.Mifare
 
             // First write the data for the format
             // All block data coming from https://www.nxp.com/docs/en/application-note/AN1304.pdf page 30+
-            var authOk = AuthenticateBlockKeyB(keyFormat, 1);
+            var authOk = await AuthenticateBlockKeyB(keyFormat, 1);
             Data = Mifare1KBlock1;
-            authOk &= WriteDataBlock(1);
-            authOk &= AuthenticateBlockKeyB(keyFormat, 2);
+            authOk &= await WriteDataBlock(1);
+            authOk &= await AuthenticateBlockKeyB(keyFormat, 2);
             Data = Mifare1KBlock2;
-            authOk &= WriteDataBlock(2);
-            authOk &= AuthenticateBlockKeyB(keyFormat, 3);
+            authOk &= await WriteDataBlock(2);
+            authOk &= await AuthenticateBlockKeyB(keyFormat, 3);
             Data = new byte[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x78, 0x77, 088, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
             Data[9] = Capacity == MifareCardCapacity.Mifare1K ? (byte)0xC1 : (byte)0xC2;
             keyFormat.CopyTo(Data, 10);
-            authOk &= WriteDataBlock(3);
-            authOk &= AuthenticateBlockKeyB(keyFormat, 4);
+            authOk &= await WriteDataBlock(3);
+            authOk &= await AuthenticateBlockKeyB(keyFormat, 4);
             Data = Mifare1KBlock4;
-            authOk &= WriteDataBlock(4);
+            authOk &= await WriteDataBlock(4);
 
             if (Capacity == MifareCardCapacity.Mifare2K)
             {
                 byte block = 16 * 4;
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = Mifare2KBlock64;
-                authOk &= WriteDataBlock(block);
+                authOk &= await WriteDataBlock(block);
                 block++;
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = Mifare1KBlock2; // 65 is same as 2
-                authOk &= WriteDataBlock(block);
+                authOk &= await WriteDataBlock(block);
                 block++;
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = Mifare2KBlock66;
-                authOk &= WriteDataBlock(block);
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await WriteDataBlock(block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = new byte[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x78, 0x77, 088, 0xC2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
                 keyFormat.CopyTo(Data, 10);
-                authOk &= WriteDataBlock(3);
+                authOk &= await WriteDataBlock(3);
             }
             else if (Capacity == MifareCardCapacity.Mifare4K)
             {
                 byte block = 16 * 4;
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = Mifare4KBlock64;
-                authOk &= WriteDataBlock(block);
+                authOk &= await WriteDataBlock(block);
                 block++;
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = Mifare1KBlock2; // 65 is same as 2
-                authOk &= WriteDataBlock(block);
+                authOk &= await WriteDataBlock(block);
                 block++;
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = Mifare1KBlock2; // 66 is same as 2
-                authOk &= WriteDataBlock(block);
-                authOk &= AuthenticateBlockKeyB(keyFormat, block);
+                authOk &= await WriteDataBlock(block);
+                authOk &= await AuthenticateBlockKeyB(keyFormat, block);
                 Data = new byte[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x78, 0x77, 088, 0xC2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
                 keyFormat.CopyTo(Data, 10);
-                authOk &= WriteDataBlock(3);
+                authOk &= await WriteDataBlock(3);
             }
 
             // GBP should be 0xC1 for the MAD sectors and 0x40 for the others for a full read/write access
@@ -862,7 +863,7 @@ namespace Iot.Device.Card.Mifare
                 // Safe cast, max is 255
                 if ((IsSectorBlock((byte)block)) && (block != 67))
                 {
-                    var ret = AuthenticateBlockKeyB(keyFormat, (byte)(block));
+                    var ret = await AuthenticateBlockKeyB(keyFormat, (byte)(block));
                     authOk &= ret;
                     if (ret)
                     {
@@ -874,7 +875,7 @@ namespace Iot.Device.Card.Mifare
                         Data[9] = 0x40;
                         StaticDefaultBlocksNdefKeyA.CopyTo(Data, 6);
                         keyFormat.CopyTo(Data, 10);
-                        authOk &= WriteDataBlock((byte)block);
+                        authOk &= await WriteDataBlock((byte)block);
                     }
                 }
             }
@@ -888,7 +889,7 @@ namespace Iot.Device.Card.Mifare
         /// <param name="message">The NDEF Message to write</param>
         /// <param name="writeKeyA">True to write with Key A</param>
         /// <returns>True if success</returns>
-        public bool WriteNdefMessage(NdefMessage message, bool writeKeyA = true)
+        public async Task<bool> WriteNdefMessage(NdefMessage message, bool writeKeyA = true)
         {
             if ((KeyB is not object or { Length: not 6 }) && (!writeKeyA))
             {
@@ -897,21 +898,21 @@ namespace Iot.Device.Card.Mifare
 
             // We need to add 0x03 then the length on 1 or 2 bytes then the trailer 0xFE
             int messageLengthBytes = message.Length > 254 ? 3 : 1;
-            Span<byte> serializedMessage = stackalloc byte[message.Length + 2 + messageLengthBytes];
-            message.Serialize(serializedMessage.Slice(1 + messageLengthBytes));
-            serializedMessage[0] = 0x03;
+            Memory<byte> serializedMessage = new byte[message.Length + 2 + messageLengthBytes];
+            message.Serialize(serializedMessage.Slice(1 + messageLengthBytes).Span);
+            serializedMessage.Span[0] = 0x03;
             if (messageLengthBytes == 1)
             {
-                serializedMessage[1] = (byte)message.Length;
+                serializedMessage.Span[1] = (byte)message.Length;
             }
             else
             {
-                serializedMessage[1] = 0xFF;
-                serializedMessage[2] = (byte)((message.Length >> 8) & 0xFF);
-                serializedMessage[3] = (byte)(message.Length & 0xFF);
+                serializedMessage.Span[1] = 0xFF;
+                serializedMessage.Span[2] = (byte)((message.Length >> 8) & 0xFF);
+                serializedMessage.Span[3] = (byte)(message.Length & 0xFF);
             }
 
-            serializedMessage[serializedMessage.Length - 1] = 0xFE;
+            serializedMessage.Span[serializedMessage.Length - 1] = 0xFE;
 
             // Number of blocks to write
             int nbBlocks = serializedMessage.Length / 16 + (serializedMessage.Length % 16 > 0 ? 1 : 0);
@@ -965,11 +966,11 @@ namespace Iot.Device.Card.Mifare
                 // Safe cast, max is 255 in all cases
                 if (!writeKeyA)
                 {
-                    ret = AuthenticateBlockKeyB(KeyB!, (byte)(block + inc));
+                    ret = await AuthenticateBlockKeyB(KeyB!, (byte)(block + inc));
                 }
                 else
                 {
-                    ret = AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, (byte)(block + inc));
+                    ret = await AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, (byte)(block + inc));
                 }
 
                 if (!ret)
@@ -987,7 +988,7 @@ namespace Iot.Device.Card.Mifare
                     serializedMessage.Slice(block * 16).CopyTo(Data);
                 }
 
-                if (!WriteDataBlock((byte)(block + inc)))
+                if (!await WriteDataBlock((byte)(block + inc)))
                 {
                     return false;
                 }
@@ -1001,7 +1002,7 @@ namespace Iot.Device.Card.Mifare
         /// </summary>
         /// <returns>True if NDEF formated</returns>
         /// <remarks>It will only check the first 2 block of the first sector and that the GPB is set properly</remarks>
-        public bool IsFormattedNdef()
+        public async Task<bool> IsFormattedNdef()
         {
             int nbBlocks = GetNumberBlocks();
 
@@ -1017,41 +1018,41 @@ namespace Iot.Device.Card.Mifare
 
             // First write the data for the format
             // All block data coming from https://www.nxp.com/docs/en/application-note/AN1304.pdf page 30+
-            var authOk = AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, 1);
-            authOk &= ReadDataBlock(1);
+            var authOk = await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, 1);
+            authOk &= await ReadDataBlock(1);
             authOk &= Data.SequenceEqual(Mifare1KBlock1);
-            authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, 2);
-            authOk &= ReadDataBlock(2);
+            authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, 2);
+            authOk &= await ReadDataBlock(2);
             authOk &= Data.SequenceEqual(Mifare1KBlock2);
 
             if (Capacity == MifareCardCapacity.Mifare2K)
             {
                 byte block = 16 * 4;
-                authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
-                authOk &= ReadDataBlock(block);
+                authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
+                authOk &= await ReadDataBlock(block);
                 authOk &= Data.SequenceEqual(Mifare2KBlock64);
                 block++;
-                authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
-                authOk &= ReadDataBlock(block);
+                authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
+                authOk &= await ReadDataBlock(block);
                 authOk &= Data.SequenceEqual(Mifare1KBlock2); // 65 is same as 2
                 block++;
-                authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
-                authOk &= ReadDataBlock(block);
+                authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
+                authOk &= await ReadDataBlock(block);
                 authOk &= Data.SequenceEqual(Mifare2KBlock66);
             }
             else if (Capacity == MifareCardCapacity.Mifare4K)
             {
                 byte block = 16 * 4;
-                authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
-                authOk &= ReadDataBlock(block);
+                authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
+                authOk &= await ReadDataBlock(block);
                 authOk &= Data.SequenceEqual(Mifare4KBlock64);
                 block++;
-                authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
-                authOk &= ReadDataBlock(block);
+                authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
+                authOk &= await ReadDataBlock(block);
                 authOk &= Data.SequenceEqual(Mifare1KBlock2); // 65 is same as 2
                 block++;
-                authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
-                authOk &= ReadDataBlock(block);
+                authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, block);
+                authOk &= await ReadDataBlock(block);
                 authOk &= Data.SequenceEqual(Mifare1KBlock2); // 66 is same as 2
             }
 
@@ -1063,16 +1064,16 @@ namespace Iot.Device.Card.Mifare
                 {
                     if ((block == 3) || (block == 67))
                     {
-                        authOk &= AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, (byte)block);
+                        authOk &= await AuthenticateBlockKeyA(StaticDefaultFirstBlockNdefKeyA, (byte)block);
                     }
                     else
                     {
-                        authOk &= AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, (byte)block);
+                        authOk &= await AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, (byte)block);
                     }
 
                     if (authOk)
                     {
-                        authOk &= ReadDataBlock((byte)block);
+                        authOk &= await ReadDataBlock((byte)block);
                         if (authOk)
                         {
                             byte gpb = 0x40;
@@ -1108,11 +1109,11 @@ namespace Iot.Device.Card.Mifare
         /// <param name="block">The block number to write</param>
         /// <returns>True if success</returns>
         /// <remarks>You will need to be authenticated properly before</remarks>
-        public bool WriteDataBlock(byte block)
+        public async Task<bool> WriteDataBlock(byte block)
         {
             BlockNumber = block;
             Command = MifareCardCommand.Write16Bytes;
-            var ret = RunMifareCardCommand();
+            var ret = await RunMifareCardCommand();
             return ret >= 0;
         }
 
@@ -1122,23 +1123,22 @@ namespace Iot.Device.Card.Mifare
         /// <param name="block">The block number to write</param>
         /// <returns>True if success</returns>
         /// /// <remarks>You will need to be authenticated properly before</remarks>
-        private bool ReadDataBlock(byte block)
+        private async Task<bool> ReadDataBlock(byte block)
         {
             BlockNumber = block;
             Command = MifareCardCommand.Read16Bytes;
-            var ret = RunMifareCardCommand();
+            var ret = await RunMifareCardCommand();
             return ret >= 0;
         }
 
         /// <summary>
         /// Try to read a NDEF Message from a Mifare card
         /// </summary>
-        /// <param name="message">The NDEF message</param>
-        /// <returns>True if success</returns>
-        public bool TryReadNdefMessage(out NdefMessage message)
+        /// <returns>True if success and the Message</returns>
+        public async Task<(bool Result, NdefMessage Message)> TryReadNdefMessage()
         {
             const int BlockSize = 16;
-            message = new NdefMessage();
+            var resultMessage = new NdefMessage();
 
             int cardSize;
             switch (Capacity)
@@ -1168,19 +1168,19 @@ namespace Iot.Device.Card.Mifare
             }
 
             // Read block 4 and check for the data, it should be present in this one
-            var authOk = AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, 4);
-            authOk &= ReadDataBlock(4);
+            var authOk = await AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, 4);
+            authOk &= await ReadDataBlock(4);
 
             if (!authOk)
             {
-                return false;
+                return (false, resultMessage);
             }
 
             var (start, size) = NdefMessage.GetStartSizeNdef(Data.AsSpan());
 
             if ((start < 0) || (size < 0))
             {
-                return false;
+                return (false, resultMessage);
             }
 
             // calculate the size to read
@@ -1189,10 +1189,10 @@ namespace Iot.Device.Card.Mifare
             // We would have to read more available data than the capacity
             if (cardSize < blocksToRead * BlockSize)
             {
-                return false;
+                return (false, resultMessage);
             }
 
-            Span<byte> card = new byte[blocksToRead * BlockSize];
+            Memory<byte> card = new byte[blocksToRead * BlockSize];
             Data.CopyTo(card);
 
             byte idxCard = 1;
@@ -1213,16 +1213,16 @@ namespace Iot.Device.Card.Mifare
                     continue;
                 }
 
-                authOk = AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, (byte)block);
+                authOk = await AuthenticateBlockKeyA(StaticDefaultBlocksNdefKeyA, (byte)block);
                 if (!authOk)
                 {
-                    return false;
+                    return (false, resultMessage);
                 }
 
-                authOk = ReadDataBlock((byte)block);
+                authOk = await ReadDataBlock((byte)block);
                 if (!authOk)
                 {
-                    return false;
+                    return (false, resultMessage);
                 }
 
                 Data.CopyTo(card.Slice(idxCard * BlockSize));
@@ -1230,23 +1230,23 @@ namespace Iot.Device.Card.Mifare
                 block++;
             }
 
-            var ndef = NdefMessage.ExtractMessage(card);
+            var ndef = NdefMessage.ExtractMessage(card.Span);
 
             try
             {
-                message = new NdefMessage(ndef);
+                resultMessage = new NdefMessage(ndef);
             }
             catch (Exception)
             {
                 // Catching all exceptions as quite a lot can happen
                 // This is checking if a message is valid or not
-                return false;
+                return (false, resultMessage);
             }
 
-            return true;
+            return (true, resultMessage);
         }
 
-        private bool AuthenticateBlockKeyA(byte[] keyA, byte block)
+        private async Task<bool> AuthenticateBlockKeyA(byte[] keyA, byte block)
         {
             byte[] oldKeyA = new byte[6];
             if (KeyA is not object or { Length: not 6 })
@@ -1258,13 +1258,13 @@ namespace Iot.Device.Card.Mifare
             keyA.CopyTo(KeyA, 0);
             BlockNumber = block;
             Command = MifareCardCommand.AuthenticationA;
-            var ret = RunMifareCardCommand();
+            var ret = await RunMifareCardCommand();
             oldKeyA.CopyTo(KeyA, 0);
 
             return ret >= 0;
         }
 
-        private bool AuthenticateBlockKeyB(byte[] keyB, byte block)
+        private async Task<bool> AuthenticateBlockKeyB(byte[] keyB, byte block)
         {
             byte[] oldKeyB = new byte[6];
             if (KeyB is not object)
@@ -1281,7 +1281,7 @@ namespace Iot.Device.Card.Mifare
             keyB.CopyTo(KeyB, 0);
             BlockNumber = block;
             Command = MifareCardCommand.AuthenticationB;
-            var ret = RunMifareCardCommand();
+            var ret = await RunMifareCardCommand();
             oldKeyB.CopyTo(KeyB, 0);
 
             return ret >= 0;

@@ -53,6 +53,12 @@ namespace Iot.Device.Card.CreditCardProcessing
         public uint Parent { get; set; }
 
         /// <summary>
+        /// This is used to link the Tag to the corresponding App on the card.
+        /// It is the string converted from the bytes of the ApplicationIdentifier Data
+        /// </summary>
+        public string CorrespondingApplicationIdentifier { get; set; } = string.Empty;
+
+        /// <summary>
         /// True if the Tag is constructed, which means contains sub Tags
         /// A constructed tag is not necessary a template
         /// </summary>
@@ -74,32 +80,31 @@ namespace Iot.Device.Card.CreditCardProcessing
         /// <summary>
         /// Search for a specific tag in a list of Tag including the sub Tags
         /// </summary>
-        /// <param name="tagToSearch">The list of tags to search in</param>
-        /// <param name="tagNumber">The tag number to search for</param>
+        /// <param name="availableTags">The list of tags to search in</param>
+        /// <param name="tagNumberToFind">The tag number to search for</param>
         /// <returns>A list of tags</returns>
-        public static List<Tag> SearchTag(List<Tag> tagToSearch, uint tagNumber)
+        public static List<Tag> SearchTag(IReadOnlyList<Tag> availableTags, uint tagNumberToFind)
         {
-            List<Tag> tags = new List<Tag>();
+            var foundTags = new List<Tag>();
 
-            foreach (var tagparent in tagToSearch)
+            foreach (var currentTag in availableTags)
             {
-                var isTemplate = TagList.Tags.Where(m => m.TagNumber == tagparent.TagNumber).FirstOrDefault();
-                if ((isTemplate?.IsTemplate == true) || (isTemplate?.IsConstructed == true))
-                {
-                    var ret = SearchTag(tagparent.Tags, tagNumber);
-                    if (ret.Count > 0)
-                    {
-                        tags.AddRange(ret);
-                    }
-                }
+               if (currentTag.IsTemplateOrConstructed())
+               {
+                   var ret = SearchTag(currentTag.Tags, tagNumberToFind);
+                   if (ret.Count > 0)
+                   {
+                       foundTags.AddRange(ret);
+                   }
+               }
 
-                if (tagparent.TagNumber == tagNumber)
-                {
-                    tags.Add(tagparent);
-                }
+               if (currentTag.TagNumber == tagNumberToFind)
+               {
+                   foundTags.Add(currentTag);
+               }
             }
 
-            return tags;
+            return foundTags;
         }
     }
 }

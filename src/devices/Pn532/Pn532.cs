@@ -10,6 +10,7 @@ using System.Device.Spi;
 using System.IO;
 using System.IO.Ports;
 using System.Threading;
+using System.Threading.Tasks;
 using Iot.Device.Card;
 using Iot.Device.Common;
 using Iot.Device.Pn532.AsTarget;
@@ -770,18 +771,18 @@ namespace Iot.Device.Pn532
         /// <param name="dataToSend">The data to write to the card</param>
         /// <param name="dataFromCard">The potential data to receive</param>
         /// <returns>The number of bytes read</returns>
-        public override int Transceive(byte targetNumber, ReadOnlySpan<byte> dataToSend, Span<byte> dataFromCard)
+        public override Task<int> Transceive(byte targetNumber, ReadOnlyMemory<byte> dataToSend, Memory<byte> dataFromCard)
         {
             // We need to add some logic here to understand what the command is and the size of the needed buffer.
             // For Mifare card, the authentications needs to use the native part.
             // For non Mifare card, it should not.
-            if (((dataToSend[0] == 0x60) || (dataToSend[0] == 0x61)) && (dataFromCard.Length == 0))
+            if (((dataToSend.Span[0] == 0x60) || (dataToSend.Span[0] == 0x61)) && (dataFromCard.Length == 0))
             {
-                return TransceiveAdvance(targetNumber, dataToSend, dataFromCard);
+                return Task.FromResult(TransceiveAdvance(targetNumber, dataToSend.Span, dataFromCard.Span));
             }
             else
             {
-                return WriteReadDirect(dataToSend, dataFromCard);
+                return Task.FromResult(WriteReadDirect(dataToSend.Span, dataFromCard.Span));
             }
         }
 
@@ -819,12 +820,12 @@ namespace Iot.Device.Pn532
         }
 
         /// <inheritdoc/>
-        public override bool ReselectTarget(byte targetNumber)
+        public override Task<bool> ReselectTarget(byte targetNumber)
         {
             // First one doesn't need to succeed, only the select needs
             DeselectTarget(targetNumber);
             var ret = SelectTarget(targetNumber);
-            return ret;
+            return Task.FromResult(ret);
         }
 
         /// <summary>
